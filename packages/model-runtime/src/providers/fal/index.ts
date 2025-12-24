@@ -15,9 +15,12 @@ const log = debug('lobe-image:fal');
 type FluxDevOutput = Awaited<ReturnType<typeof fal.subscribe<'fal-ai/flux/dev'>>>['data'];
 
 export class LobeFalAI implements LobeRuntimeAI {
+  private apiKey: string;
+
   constructor({ apiKey }: ClientOptions = {}) {
     if (!apiKey) throw AgentRuntimeError.createError(AgentRuntimeErrorType.InvalidProviderAPIKey);
 
+    this.apiKey = apiKey;
     fal.config({
       credentials: apiKey,
     });
@@ -80,17 +83,32 @@ export class LobeFalAI implements LobeRuntimeAI {
     const finalInput = {
       ...defaultInput,
       ...userInput,
+      sync_mode: true,
     };
 
     log('Calling fal.subscribe with endpoint: %s and input: %O', endpoint, finalInput);
     try {
-      const { data } = await fal.subscribe(endpoint, {
+      const { requestId, data } = await fal.subscribe(endpoint, {
         headers: {
-          'X-Fal-Object-Lifecycle-Preference': '{"expiration_duration_seconds": 600}',
+          'X-Fal-Object-Lifecycle-Preference': '{"expiration_duration_seconds": 180}',
         },
         input: finalInput,
       });
       const image = (data as FluxDevOutput).images[0];
+
+      setTimeout(
+        async () => {
+          try {
+            await fetch(`https://api.fal.ai/v1/models/requests/${requestId}/payloads`, {
+              headers: { Authorization: `Key ${this.apiKey}` },
+              method: 'DELETE',
+            });
+          } catch {
+            // ignore
+          }
+        },
+        (image.url.startsWith('http') ? 3 * 60 : 1) * 1000,
+      );
 
       return {
         imageUrl: image.url,
